@@ -17,7 +17,7 @@
 
 package org.apache.spark.scheduler.cluster.mesos
 
-import org.apache.mesos.Protos.{ContainerInfo, Image, Volume}
+import org.apache.mesos.Protos._
 import org.apache.mesos.Protos.ContainerInfo.DockerInfo
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -100,6 +100,18 @@ private[mesos] object MesosSchedulerBackendUtil extends Logging {
   }
 
   /**
+    * Parse a comma-delimited list of enviroment variables, each of which
+    * takes the form <nameVar>=<valueVar>
+    *
+    */
+  def parseEnviromentVariables(enviroment: String): List[Parameter] = {
+    enviroment.split(",").map(envVar =>
+      Parameter.newBuilder()
+        .setKey("env").setValue(envVar).build()).toList
+  }
+
+
+  /**
    * Construct a DockerInfo structure and insert it into a ContainerInfo
    */
   def addDockerInfo(
@@ -108,7 +120,8 @@ private[mesos] object MesosSchedulerBackendUtil extends Logging {
       containerizer: String,
       forcePullImage: Boolean = false,
       volumes: Option[List[Volume]] = None,
-      portmaps: Option[List[ContainerInfo.DockerInfo.PortMapping]] = None): Unit = {
+      portmaps: Option[List[ContainerInfo.DockerInfo.PortMapping]] = None,
+      enviromentVariables: Option[List[Parameter]] = None): Unit = {
 
     containerizer match {
       case "docker" =>
@@ -119,6 +132,7 @@ private[mesos] object MesosSchedulerBackendUtil extends Logging {
         // TODO (mgummelt): Remove this. Portmaps have no effect,
         //                  as we don't support bridge networking.
         portmaps.foreach(_.foreach(docker.addPortMappings))
+        enviromentVariables.foreach(_.foreach(docker.addParameters))
         container.setDocker(docker)
       case "mesos" =>
         container.setType(ContainerInfo.Type.MESOS)
@@ -151,6 +165,9 @@ private[mesos] object MesosSchedulerBackendUtil extends Logging {
     val portmaps = conf
       .getOption("spark.mesos.executor.docker.portmaps")
       .map(parsePortMappingsSpec)
+    val envParams = conf
+      .getOption("spark.mesos.executor.docker.enviromentParameters")
+      .map(parseEnviromentVariables)
 
     val containerizer = conf.get("spark.mesos.containerizer", "docker")
     addDockerInfo(
@@ -159,7 +176,8 @@ private[mesos] object MesosSchedulerBackendUtil extends Logging {
       containerizer,
       forcePullImage = forcePullImage,
       volumes = volumes,
-      portmaps = portmaps)
+      portmaps = portmaps,
+      envParams)
     logDebug("setupContainerDockerInfo: using docker image: " + imageName)
   }
 }
