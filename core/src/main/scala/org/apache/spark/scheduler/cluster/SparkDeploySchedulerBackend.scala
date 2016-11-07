@@ -95,7 +95,7 @@ private[spark] class SparkDeploySchedulerBackend(
     launcherBackend.setState(SparkAppHandle.State.SUBMITTED)
     waitForRegistration()
     launcherBackend.setState(SparkAppHandle.State.RUNNING)
-  }
+    }
 
   override def stop(): Unit = synchronized {
     stop(SparkAppHandle.State.FINISHED)

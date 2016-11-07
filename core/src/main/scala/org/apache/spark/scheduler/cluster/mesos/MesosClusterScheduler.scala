@@ -456,8 +456,14 @@ private[spark] class MesosClusterScheduler(
     val cmdOptions = generateCmdOption(desc, sandboxPath).mkString(" ")
     val primaryResource = new File(sandboxPath, desc.jarUrl.split("/").last).toString()
     val appArguments = desc.command.arguments.mkString(" ")
-
-    s"$executable $cmdOptions $primaryResource $appArguments"
+    val entrypoint = desc.conf.getOption("spark.mesos.executor.docker.entrypointUri") match {
+      case Some(entrypoint) => {
+        val entryPointCanonical = new File(entrypoint).getCanonicalPath
+        s"$entryPointCanonical;"
+      }
+      case _ => ""
+    }
+    s"$entrypoint$executable $cmdOptions $primaryResource $appArguments"
   }
 
   private def buildDriverCommand(desc: MesosDriverDescription): CommandInfo = {
