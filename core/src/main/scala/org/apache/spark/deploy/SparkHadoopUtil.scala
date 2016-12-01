@@ -22,9 +22,12 @@ import java.lang.reflect.Method
 import java.security.PrivilegedExceptionAction
 import java.util.{Arrays, Comparator}
 
+import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod
+
 import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 import scala.language.postfixOps
+import scala.util.{Success, Try}
 import scala.util.control.NonFatal
 
 import com.google.common.primitives.Longs
@@ -40,7 +43,7 @@ import org.apache.hadoop.security.{Credentials, UserGroupInformation}
 
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.util.Utils
-import org.apache.spark.{Logging, SparkConf, SparkException}
+import org.apache.spark.{SparkEnv, Logging, SparkConf, SparkException}
 
 /**
  * :: DeveloperApi ::
@@ -48,7 +51,7 @@ import org.apache.spark.{Logging, SparkConf, SparkException}
  */
 @DeveloperApi
 class SparkHadoopUtil extends Logging {
-  private val sparkConf = new SparkConf()
+  private val sparkConf = new SparkConf
   val conf: Configuration = newConfiguration(sparkConf)
   UserGroupInformation.setConfiguration(conf)
 
@@ -60,14 +63,27 @@ class SparkHadoopUtil extends Logging {
    * you need to look https://issues.apache.org/jira/browse/HDFS-3545 and possibly
    * do a FileSystem.closeAllForUGI in order to avoid leaking Filesystems
    */
-  def runAsSparkUser(func: () => Unit) {
-    val user = Utils.getCurrentUserName()
-    logDebug("running as user: " + user)
-    val ugi = UserGroupInformation.createRemoteUser(user)
-    transferCredentials(UserGroupInformation.getCurrentUser(), ugi)
+  def runAsSparkUser(user: Option[String], func: () => Unit) {
+    val ugi = getSparkUser(user)
     ugi.doAs(new PrivilegedExceptionAction[Unit] {
       def run: Unit = func()
     })
+  }
+
+  private def getSparkUser(maybeProxyUser: Option[String]): UserGroupInformation = {
+    val user = Utils.getCurrentUserName()
+    val ugi = UserGroupInformation.createRemoteUser(user)
+    transferCredentials(UserGroupInformation.getCurrentUser(), ugi)
+    ugi.setAuthenticationMethod(AuthenticationMethod.KERBEROS)
+    maybeProxyUser match {
+      case Some(proxyUser) =>
+        val proxy = UserGroupInformation.createProxyUser(proxyUser, ugi)
+        logInfo("running as proxy user: " + proxy.getUserName)
+        proxy
+      case _ =>
+        logInfo("running as user: " + ugi.getUserName)
+        ugi
+    }
   }
 
   def transferCredentials(source: UserGroupInformation, dest: UserGroupInformation) {

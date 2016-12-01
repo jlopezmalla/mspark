@@ -157,7 +157,7 @@ private[spark] class CoarseMesosSchedulerBackend(
     }
   }
 
-  def createCommand(offer: Offer, numCores: Int, taskId: String): CommandInfo = {
+  def createCommand(offer: Offer, numCores: Int, taskId: String, taskName: String): CommandInfo = {
     val executorSparkHome = conf.getOption("spark.mesos.executor.home")
       .orElse(sc.getSparkHome())
       .getOrElse {
@@ -202,6 +202,8 @@ private[spark] class CoarseMesosSchedulerBackend(
       case _ => "echo NOENTRYPOINT;"
     }
 
+//    val hostnameForMesos = s"$taskName.${conf.get("spark.app.name")}.mesos"
+//    logInfo(s"NEW HOSTNAME TUNNEAO PARA TAREAS: $hostnameForMesos")
     if (uri.isEmpty) {
       val runScript = new File(executorSparkHome, "./bin/spark-class").getCanonicalPath
       command.setValue(entrypoint +
@@ -402,11 +404,12 @@ private[spark] class CoarseMesosSchedulerBackend(
           val (resourcesLeft, memResourcesToUse) =
             partitionResources(afterCPUResources.asJava, "mem", taskMemory)
 
+          val taskName = "Task-" + taskId
           val taskBuilder = MesosTaskInfo.newBuilder()
             .setTaskId(TaskID.newBuilder().setValue(taskId.toString).build())
             .setSlaveId(offer.getSlaveId)
-            .setCommand(createCommand(offer, taskCPUs + extraCoresPerExecutor, taskId))
-            .setName("Task " + taskId)
+            .setCommand(createCommand(offer, taskCPUs + extraCoresPerExecutor, taskId, taskName))
+            .setName(taskName)
             .addAllResources(cpuResourcesToUse.asJava)
             .addAllResources(memResourcesToUse.asJava)
 

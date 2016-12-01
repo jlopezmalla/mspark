@@ -695,6 +695,8 @@ object SparkSubmit {
       sysProps("spark.submit.pyFiles") = formattedPyFiles
     }
 
+    if(args.proxyUser != null) sysProps("spark.proxyUser") = args.proxyUser
+
     (childArgs, childClasspath, sysProps, childMainClass)
   }
 

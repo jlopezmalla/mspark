@@ -188,7 +188,8 @@ object SparkEnv extends Logging {
       mockOutputCommitCoordinator: Option[OutputCommitCoordinator] = None): SparkEnv = {
     assert(conf.contains("spark.driver.host"), "spark.driver.host is not set on the driver!")
     assert(conf.contains("spark.driver.port"), "spark.driver.port is not set on the driver!")
-    val hostname = conf.get("spark.driver.host")
+//    val hostname = conf.get("spark.driver.host")
+    val hostname = conf.getOption("spark.mesos.driver.url.host").getOrElse(conf.get("spark.driver.host"))
     val port = conf.get("spark.driver.port").toInt
     create(
       conf,

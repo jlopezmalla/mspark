@@ -31,12 +31,15 @@ import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.scheduler.cluster.mesos.MesosTaskLaunchData
 import org.apache.spark.util.{SignalLogger, Utils}
 
+import scala.util.Try
+
 private[spark] class MesosExecutorBackend
   extends MesosExecutor
   with ExecutorBackend
   with Logging {
 
   var executor: Executor = null
+  private var env: SparkEnv = null
   var driver: ExecutorDriver = null
 
   override def statusUpdate(taskId: Long, state: TaskState, data: ByteBuffer) {
@@ -70,15 +73,15 @@ private[spark] class MesosExecutorBackend
 
     val properties = Utils.deserialize[Array[(String, String)]](executorInfo.getData.toByteArray) ++
       Seq[(String, String)](("spark.app.id", frameworkInfo.getId.getValue))
+    logInfo("Mesos Executor Properties:-------------------------------------------")
+    properties.foreach(a => logInfo("key:" + a._1 + "; value:" + a._2))
+    logInfo("Fin Mesos Executor Properties:-------------------------------------------")
     val conf = new SparkConf(loadDefaults = true).setAll(properties)
     val port = conf.getInt("spark.executor.port", 0)
-    val env = SparkEnv.createExecutorEnv(
+    env = SparkEnv.createExecutorEnv(
       conf, executorId, slaveInfo.getHostname, port, cpusPerTask, isLocal = false)
 
-    executor = new Executor(
-      executorId,
-      slaveInfo.getHostname,
-      env)
+    executor = new Executor(executorId, slaveInfo.getHostname, env)
   }
 
   override def launchTask(d: ExecutorDriver, taskInfo: TaskInfo) {
@@ -87,10 +90,12 @@ private[spark] class MesosExecutorBackend
     if (executor == null) {
       logError("Received launchTask but executor was null")
     } else {
-      SparkHadoopUtil.get.runAsSparkUser { () =>
-        executor.launchTask(this, taskId = taskId, attemptNumber = taskData.attemptNumber,
-          taskInfo.getName, taskData.serializedTask)
-      }
+      val a = taskInfo.getName
+      logInfo(s"taskInfo name: $a")
+
+      SparkHadoopUtil.get.runAsSparkUser(executor.conf.getOption("spark.proxyUser"), func = () =>
+          executor.launchTask(this, taskId = taskId, attemptNumber = taskData.attemptNumber,
+            taskInfo.getName, taskData.serializedTask))
     }
   }
 

@@ -167,65 +167,69 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
       userClassPath: Seq[URL]) {
 
     SignalLogger.register(log)
+    // Debug code
+    Utils.checkHost(hostname)
 
-    SparkHadoopUtil.get.runAsSparkUser { () =>
-      // Debug code
-      Utils.checkHost(hostname)
-
-      // Bootstrap to fetch the driver's Spark properties.
-      val executorConf = new SparkConf
-      val port = executorConf.getInt("spark.executor.port", 0)
-      val fetcher = RpcEnv.create(
-        "driverPropsFetcher",
-        hostname,
-        port,
-        executorConf,
-        new SecurityManager(executorConf),
-        clientMode = true)
-      val driver = fetcher.setupEndpointRefByURI(driverUrl)
-      val props = driver.askWithRetry[Seq[(String, String)]](RetrieveSparkProps) ++
-        Seq[(String, String)](("spark.app.id", appId))
-      fetcher.shutdown()
-
-      // Create SparkEnv using properties we fetched from the driver.
-      val driverConf = new SparkConf()
-      for ((key, value) <- props) {
-        // this is required for SSL in standalone mode
-        if (SparkConf.isExecutorStartupConf(key)) {
-          driverConf.setIfMissing(key, value)
-        } else {
-          driverConf.set(key, value)
+    // Bootstrap to fetch the driver's Spark properties.
+    val executorConf = new SparkConf
+    val port = executorConf.getInt("spark.executor.port", 0)
+    val fetcher = RpcEnv.create(
+      "driverPropsFetcher",
+      hostname,
+      port,
+      executorConf,
+      new SecurityManager(executorConf),
+      clientMode = true)
+    val driver = fetcher.setupEndpointRefByURI(driverUrl)
+    val props = driver.askWithRetry[Seq[(String, String)]](RetrieveSparkProps) ++
+      Seq[(String, String)](("spark.app.id", appId))
+    fetcher.shutdown()
+    props.foreach{case (key, value) => logInfo(s"key: $key;value: $value")}
+    val orElse = props.find(a => a._1.toLowerCase.trim == "spark.proxyUser".trim.toLowerCase)
+      .map(_._2)
+    SparkHadoopUtil.get.runAsSparkUser( orElse, () => {
+      {
+        // Create SparkEnv using properties we fetched from the driver.
+        val driverConf = new SparkConf()
+        for ((key, value) <- props) {
+          // this is required for SSL in standalone mode
+          if (SparkConf.isExecutorStartupConf(key)) {
+            driverConf.setIfMissing(key, value)
+          } else {
+            driverConf.set(key, value)
+          }
         }
-      }
-      if (driverConf.contains("spark.yarn.credentials.file")) {
-        logInfo("Will periodically update credentials from: " +
-          driverConf.get("spark.yarn.credentials.file"))
-        SparkHadoopUtil.get.startExecutorDelegationTokenRenewer(driverConf)
-      }
+        if (driverConf.contains("spark.yarn.credentials.file")) {
+          logInfo("Will periodically update credentials from: " +
+            driverConf.get("spark.yarn.credentials.file"))
+          SparkHadoopUtil.get.startExecutorDelegationTokenRenewer(driverConf)
+        }
 
-      if (driverConf.contains("spark.mesos.kerberos.hdfsDelegationTokens")) {
-        val value = driverConf.get("spark.mesos.kerberos.hdfsDelegationTokens")
-        val tokens = DatatypeConverter.parseBase64Binary(value)
-        addDelegationTokens(tokens, driverConf)
-      }
+        if (driverConf.contains("spark.mesos.kerberos.hdfsDelegationTokens")) {
+          val value = driverConf.get("spark.mesos.kerberos.hdfsDelegationTokens")
+          val tokens = DatatypeConverter.parseBase64Binary(value)
+          addDelegationTokens(tokens, driverConf)
+        }
 
-      val env = SparkEnv.createExecutorEnv(
-        driverConf, executorId, hostname, port, cores, isLocal = false)
+        val env = SparkEnv.createExecutorEnv(
+          driverConf, executorId, hostname, port, cores, isLocal = false)
 
-      // SparkEnv will set spark.executor.port if the rpc env is listening for incoming
-      // connections (e.g., if it's using akka). Otherwise, the executor is running in
-      // client mode only, and does not accept incoming connections.
-      val sparkHostPort = env.conf.getOption("spark.executor.port").map { port =>
+        // SparkEnv will set spark.executor.port if the rpc env is listening for incoming
+        // connections (e.g., if it's using akka). Otherwise, the executor is running in
+        // client mode only, and does not accept incoming connections.
+        val sparkHostPort = env.conf.getOption("spark.executor.port").map { port =>
           hostname + ":" + port
         }.orNull
-      env.rpcEnv.setupEndpoint("Executor", new CoarseGrainedExecutorBackend(
-        env.rpcEnv, driverUrl, executorId, sparkHostPort, cores, userClassPath, env))
-      workerUrl.foreach { url =>
-        env.rpcEnv.setupEndpoint("WorkerWatcher", new WorkerWatcher(env.rpcEnv, url))
+        env.rpcEnv.setupEndpoint("Executor", new CoarseGrainedExecutorBackend(
+          env.rpcEnv, driverUrl, executorId, sparkHostPort, cores, userClassPath, env))
+        workerUrl.foreach { url =>
+          env.rpcEnv.setupEndpoint("WorkerWatcher", new WorkerWatcher(env.rpcEnv, url))
+        }
+        env.rpcEnv.awaitTermination()
+        SparkHadoopUtil.get.stopExecutorDelegationTokenRenewer()
       }
-      env.rpcEnv.awaitTermination()
-      SparkHadoopUtil.get.stopExecutorDelegationTokenRenewer()
     }
+    )
   }
 
   def main(args: Array[String]) {

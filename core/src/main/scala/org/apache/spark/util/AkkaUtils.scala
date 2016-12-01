@@ -193,7 +193,8 @@ private[spark] object AkkaUtils extends Logging {
 
   def makeDriverRef(name: String, conf: SparkConf, actorSystem: ActorSystem): ActorRef = {
     val driverActorSystemName = SparkEnv.driverActorSystemName
-    val driverHost: String = conf.get("spark.driver.host", "localhost")
+    val driverHost: String = conf.get("spark.mesos.secured.driver.host",
+      conf.get("spark.driver.host", "localhost"))
     val driverPort: Int = conf.getInt("spark.driver.port", 7077)
     Utils.checkHost(driverHost, "Expected hostname")
     val url = address(protocol(actorSystem), driverActorSystemName, driverHost, driverPort, name)
